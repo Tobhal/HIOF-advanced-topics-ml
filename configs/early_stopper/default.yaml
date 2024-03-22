@@ -1,0 +1,4 @@
+early_stopper:
+  stop_patience: 10
+  verbose: True
+  save_every: 5

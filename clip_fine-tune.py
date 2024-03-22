@@ -38,7 +38,7 @@ from train_clip.utils.clip_utils import gen_word_objs_embeddings
 
 import random
 
-from parser import phosc_net_argparse, dataset_argparse, early_stopper_argparse, aling_fine_tune_argparse
+from parser import phosc_net_argparse, dataset_argparse, early_stopper_argparse, clip_fine_tune_argparse
 
 from utils.get_dataset import get_training_loader, get_validation_loader, get_test_loader
 
@@ -296,8 +296,6 @@ def validate_one_epoch(epoch, val_loader, clip_model, clip_preprocess, loader, s
 
 
 def main():
-    global clip_model, clip_preprocess, model_save_path
-
     parser = argparse.ArgumentParser()
 
     parser = aling_fine_tune_argparse(parser)

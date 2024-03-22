@@ -1,0 +1,18 @@
+data:
+  data_dir: BengaliWords/BengaliWords_CroppedVersion_Folds
+  dataset: BengaliWords
+  split_name: Fold0_use_50
+  image_extractor: resnet18
+  test_set: val
+  num_negs: 1
+  warmup_steps: 10
+  pairs_dropout: 0.0
+  subset: false
+  train_only: false
+  update_features: false
+  return_image: false
+  augmented: false
+  open_world: true
+  batch_size: 64
+  workers: 0
+  shuffled: true

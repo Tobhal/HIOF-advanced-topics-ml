@@ -1,0 +1,11 @@
+phoscnet:
+  phosc_model_name: ResNet18Phosc
+  phos_size: 195
+  phoc_size: 1200
+  phos_layers: 1
+  phoc_layers: 1
+  phosc_dropout: 0.5
+  phosc_language_name: Bengali
+  phosc_version: ben
+  image_resize_x: 1170
+  image_resize_y: 414

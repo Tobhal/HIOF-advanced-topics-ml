@@ -20,7 +20,8 @@ from tqdm import tqdm
 
 from flags import DATA_FOLDER, device
 
-from utils.dbe import dbe
+from utils import dbe, get_phoscnet, get_test_loader, load_args
+
 from data import dataset_bengali as dset
 from data.dataset_bengali import ImageLoader
 
@@ -31,7 +32,6 @@ from modules.utils.utils import get_phosc_description
 
 import numpy as np
 
-from utils.dbe import dbe
 from utils.utils import clip_text_features_from_description
 
 from torchvision import transforms
@@ -39,67 +39,13 @@ from typing import List, Tuple
 
 from modules.utils.utils import split_string_into_chunks
 
-# align
-from transformers import AlignProcessor, AlignModel, AutoTokenizer
-from enum import Enum
+from parser import phosc_net_argparse, dataset_argparse, early_stopper_argparse, clip_compare_argparse
 
-split = 'Fold0_use_50'
-use_augmented = False
+import argparse
+
 
 # czsl/models/fine-tuned_clip/Fold0_use/simple/18/best.pt
-finetuned_model_save_path = ospj('models', 'trained_clip', split, 'bengali_words', '1', 'best.pt')
-trained_model_save_path = ospj('models', 'trained_clip', split, 'super_aug', '2', 'best.pt')
-root_dir = ospj(DATA_FOLDER, "BengaliWords", "BengaliWords_CroppedVersion_Folds")
-image_loader_path = ospj(root_dir, split)
 
-# Define phosc model
-phosc_model = create_model(
-    model_name='ResNet18Phosc',
-    phos_size=195,
-    phoc_size=1200,
-    phos_layers=1,
-    phoc_layers=1,
-    dropout=0.5
-).to(device)
-
-# Sett phos and phoc language
-set_phos_version('ben')
-set_phoc_version('ben')
-
-# Assuming you have the necessary imports and initializations done (like dset, phosc_model, etc.)
-testset = dset.CompositionDataset(
-    root=root_dir,
-    phase='train',
-    split=split,
-    # phase='test'
-    # split='fold_0_new',
-    model='resnet18',
-    num_negs=1,
-    pair_dropout=0.5,
-    update_features=False,
-    train_only=True,
-    open_world=True,
-    augmented=use_augmented,
-    add_original_data=True,
-)
-
-test_loader = torch.utils.data.DataLoader(
-    testset,
-    batch_size=64,
-    shuffle=True,
-    num_workers=0,
-)
-
-# Load original and fine-tuned CLIP models
-original_clip_model, original_clip_preprocess = clip.load("ViT-B/32", device=device)
-original_clip_model.float()
-
-# Load fine-tuned clip model
-fine_tuned_clip_model, fine_tuned_clip_preprocess = clip.load("ViT-B/32", device=device)
-fine_tuned_clip_model.float()
-
-fine_tuned_state_dict = torch.load(finetuned_model_save_path, map_location=device)
-fine_tuned_clip_model.load_state_dict(fine_tuned_state_dict)
 
 # Preprocessing for CLIP
 clip_preprocess = Compose([
@@ -109,7 +55,6 @@ clip_preprocess = Compose([
     Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
 ])
 
-loader = ImageLoader(image_loader_path)
 
 
 def calculate_cos_angle_matrix(vector_1, vector_2):
@@ -263,9 +208,47 @@ def summarize_results(*args: Tuple[str, np.floating[Any]]):
     print(f"Worst Model for Same-Class Pairs: {model_names[1 - model_names.index(best_same_class_model)]}")
 
 
-# Evaluate both models
-original_distances_same = evaluate_model(original_clip_model, test_loader, device, loader)
-fine_tuned_distances_same = evaluate_model(fine_tuned_clip_model, test_loader, device, loader)
+def main():
+    parser = argparse.ArgumentParser()
 
-# Compare and summarize results
-summarize_results(("Original CLIP", original_distances_same), ("Fine-Tuned CLIP", fine_tuned_distances_same))
+    parser = clip_compare_argparse(parser)
+    parser = phosc_net_argparse(parser)
+    parser = dataset_argparse(parser)
+
+    args = parser.parse_args()
+
+    load_args(args.clip_compare_config, args)
+    load_args(args.phosc_config, args)
+    load_args(args.data_config, args)
+
+    phosc_model = get_phoscnet(args)
+
+    finetuned_model_save_path = ospj('models', 'trained_clip', args.split_name, 'bengali_words', '1', 'best.pt')
+    trained_model_save_path = ospj('models', 'trained_clip', args.split_name, 'super_aug', '2', 'best.pt')
+    root_dir = ospj(DATA_FOLDER, "BengaliWords", "BengaliWords_CroppedVersion_Folds")
+
+    loader = ImageLoader(ospj(DATA_FOLDER, args.data_dir, args.split_name))
+
+    # Load original and fine-tuned CLIP models
+    original_clip_model, original_clip_preprocess = clip.load("ViT-B/32", device=device)
+    original_clip_model.float()
+
+    # Load fine-tuned clip model
+    fine_tuned_clip_model, fine_tuned_clip_preprocess = clip.load("ViT-B/32", device=device)
+    fine_tuned_clip_model.float()
+
+    fine_tuned_state_dict = torch.load(finetuned_model_save_path, map_location=device)
+    fine_tuned_clip_model.load_state_dict(fine_tuned_state_dict)
+
+    test_loader, _ = get_test_loader(args)
+
+    # Evaluate both models
+    original_distances_same = evaluate_model(original_clip_model, test_loader, device, loader)
+    fine_tuned_distances_same = evaluate_model(fine_tuned_clip_model, test_loader, device, loader)
+
+    # Compare and summarize results
+    summarize_results(("Original CLIP", original_distances_same), ("Fine-Tuned CLIP", fine_tuned_distances_same))
+
+
+if __name__ == '__main__':
+    main()
