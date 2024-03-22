@@ -41,10 +41,6 @@ from utils.get_dataset import get_training_loader, get_validation_loader, get_te
 
 import argparse
 
-# save_path = ospj('models', 'fine-tuned_clip', split)
-
-
-
 
 def save_matrix_as_csv(matrix, model_save_path, csv_filename="matrix.csv"):
     # Extract the directory from the model save path
@@ -167,7 +163,7 @@ def evaluate_model(model, dataloader, device):
     return avg_loss, avg_accuracy, similarities
 
 
-def evaluate_text_embedings(model, dataloader, device, preprocess=clip_preprocess):
+def evaluate_text_embedings(model, dataloader, device, preprocess):
     global align_model, align_auto_tokenizer
     model.eval()
     similarities = []
@@ -209,7 +205,7 @@ def main():
     image_loader_path = ospj(root_dir, args.split_name)
 
     phosc_model = get_phoscnet(args)
-    test_loader = get_test_loader(args)
+    test_loader, _ = get_test_loader(args)
 
     # Preprocessing for CLIP
     clip_preprocess = Compose([

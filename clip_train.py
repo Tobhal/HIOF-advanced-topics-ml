@@ -47,7 +47,27 @@ from train_clip.models.model import CLIP
 
 from typing import List, Tuple
 
+from parser import phosc_net_argparse, dataset_argparse, early_stopper_argparse, clip_matrix_argparse
+
+from utils.get_dataset import get_training_loader, get_validation_loader, get_test_loader
+
+import argparse
+from utils import dbe, get_phoscnet, get_test_loader, load_args
+
+
 def num_training_steps(train_dataloader, max_epochs, batch_size, accumulate_grad_batches=1):
+    """
+    Calculate the total number of training steps
+
+    Args:
+        train_dataloader: Training dataloader
+        max_epochs: Maximum number of epochs
+        batch_size: Batch size
+        accumulate_grad_batches: Accumulate gradient batches
+
+    Returns:
+        total_steps: Total number of training steps
+    """
     dataset_size = len(train_dataloader.dataset)  # Assuming your dataloader has a dataset attribute
 
     effective_batch_size = batch_size * accumulate_grad_batches
@@ -57,6 +77,21 @@ def num_training_steps(train_dataloader, max_epochs, batch_size, accumulate_grad
 
 
 def train_step_batch(images, words, batch_size, clip_model, optimizer, lr_scheduler):
+    """
+    Train a single batch of images and words
+
+    Args:
+        images: List of images
+        words: List of words
+        batch_size: Batch size
+        clip_model: CLIP model
+        optimizer: Optimizer
+        lr_scheduler: Learning rate scheduler
+
+    Returns:
+        total_loss: Total loss
+        acc: Accuracy
+    """
     # Transform setup
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -104,6 +139,20 @@ def train_step_batch(images, words, batch_size, clip_model, optimizer, lr_schedu
 
 
 def train_one_epoch(epoch: int, train_loader, clip_model, image_loader, optimizer, lr_scheduler) -> Tuple[float, float]:
+    """
+    Train the model for one epoch
+
+    Args:
+        epoch (int): Current epoch
+        train_loader (DataLoader): Training data loader
+        clip_model (CLIP): CLIP model
+        image_loader (ImageLoader): Image loader
+        optimizer (Optimizer): Optimizer
+        lr_scheduler (Scheduler): Learning rate scheduler
+
+    Returns:
+        Tuple[float, float]: Loss and accuracy
+    """
     clip_model.train()
     running_loss = 0
     running_acc = 0
@@ -133,6 +182,18 @@ def train_one_epoch(epoch: int, train_loader, clip_model, image_loader, optimize
 
 
 def validation_step_batch(image, text, clip_model, batch_size: int) -> Tuple[float, float]:
+    """
+    Compute validation loss and accuracy for a batch of images and texts
+
+    Args:
+        image (List[Image]): List of images
+        text (List[str]): List of text samples
+        clip_model (CLIP): CLIP model
+        batch_size (int): Batch size
+
+    Returns:
+        Tuple[float, float]: Validation loss and accuracy
+    """
     loss = 0
     acc = 0
 
@@ -183,6 +244,25 @@ def validation_step_batch(image, text, clip_model, batch_size: int) -> Tuple[flo
 
 
 def validation_one_epoch(epoch: int, val_loader, clip_model, image_loader) -> Tuple[float, float]:
+    """
+    Validation step for one epoch
+
+    args:
+        epoch: int
+            Current epoch
+        val_loader: torch.utils.data.DataLoader
+            Validation data loader
+        clip_model: CLIP
+            CLIP model
+        image_loader: Callable
+            Image loader function
+
+    returns:
+        avg_loss: float
+            Average loss
+        avg_acc: float
+            Average accuracy
+    """
     clip_model.eval()
     running_loss = 0
     running_acc = 0
@@ -209,11 +289,6 @@ def main():
     # Setup arguments
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--train_clip_config', type=str, default=ospj('configs', 'train_clip', 'default.yaml'), help='Path to the training configuration file')
-    parser.add_argument('--phosc_config', type=str, default=ospj('configs', 'phoscnet', 'default.yaml'), help='Path to the phoscnet configuration file')
-    parser.add_argument('--data_config', type=str, default=ospj('configs', 'data', 'default.yaml'), help='Path to the data configuration file')
-    parser.add_argument('--early_stopper_config', type=str, default=ospj('configs', 'early_stopper', 'default.yaml'), help='Path to the early stopper configuration file')
-
     parser = train_clip_argparse(parser)
     parser = phosc_net_argparse(parser)
     parser = dataset_argparse(parser)
@@ -227,94 +302,20 @@ def main():
     load_args(args.data_config, args)
     load_args(args.early_stopper_config, args)
 
-    # Set up clip model   
+    # Set up clip model
     with open(args.config_dir) as conf:
         config = yaml.safe_load(conf)[args.clip_model_name]
 
     clip_model = CLIP(
         **config
     )
-    
-    # Define phosc model
-    phosc_model = create_model(
-        model_name=args.phosc_model_name,
-        phos_size=args.phos_size,
-        phoc_size=args.phoc_size,
-        phos_layers=args.phos_layers,
-        phoc_layers=args.phoc_layers,
-        dropout=args.phosc_dropout
-    ).to(device)
 
-    # args.phosc_model = phosc_model
-
-    # Sett phos and phoc language
-    set_phos_version(args.phosc_version)
-    set_phoc_version(args.phosc_version)
+    phosc_model = get_phoscnet(args)
 
     # Get dataset
-    train_set = dset.CompositionDataset(
-        root=ospj(DATA_FOLDER, args.data_dir),
-        phase='train',
-        split=args.split_name,
-        model=args.image_extractor,
-        num_negs=args.num_negs,
-        pair_dropout=args.pair_dropout,
-        update_features = args.update_features,
-        train_only=args.train_only,
-        open_world=args.open_world,
-        add_original_data=True,
-        augmented=args.augmented,
-        phosc_model=phosc_model,
-    )
-
-    train_loader = torch.utils.data.DataLoader(
-        train_set,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.workers
-    )
-
-    validation_set = dset.CompositionDataset(
-        root=ospj(DATA_FOLDER,args.data_dir),
-        phase='val',
-        split=args.split_name,
-        model=args.image_extractor,
-        num_negs=args.num_negs,
-        pair_dropout=args.pair_dropout,
-        update_features = args.update_features,
-        train_only=args.train_only,
-        open_world=args.open_world,
-        add_original_data=True,
-        augmented=False,
-        phosc_model=phosc_model,
-    )
-
-    validation_loader = torch.utils.data.DataLoader(
-        validation_set,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.workers
-    )
-
-    test_set = dset.CompositionDataset(
-        root=ospj(DATA_FOLDER,args.data_dir),
-        phase=args.test_set,
-        split=args.split_name,
-        model =args.image_extractor,
-        subset=args.subset,
-        update_features = args.update_features,
-        open_world=args.open_world,
-        add_original_data=True,
-        augmented=False,
-        phosc_model=phosc_model,
-    )
-
-    test_loader = torch.utils.data.DataLoader(
-        test_set,
-        batch_size=args.test_batch_size,
-        shuffle=False,
-        num_workers=args.workers
-    )
+    train_loader, _ = get_training_loader(args)
+    validation_loader, _ = get_validation_loader(args)
+    test_loader, _ = get_test_loader(args)
 
     optimizer = torch.optim.AdamW(
         clip_model.parameters(),
@@ -349,7 +350,7 @@ def main():
     for epoch in range(args.num_epochs):
         train_loss, train_acc = train_one_epoch(
             epoch,
-            train_loader, 
+            train_loader,
             clip_model,
             image_loader,
             optimizer,
@@ -364,9 +365,6 @@ def main():
         )
 
         if early_stopping(validation_loss, clip_model, epoch):
-            print('Early stopping')
-            print(f'Best model saved at {early_stopping.best_model_path}')
-            print(f'Best model validation loss: {early_stopping.best_score}')
             break
 
 

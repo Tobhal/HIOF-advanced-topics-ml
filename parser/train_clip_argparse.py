@@ -2,16 +2,27 @@ import argparse
 from os.path import join as ospj
 
 def train_clip_argparse(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """
+    Add arguments to the parser for the train clip script.
+
+    Args:
+        parser (argparse.ArgumentParser): The parser to which the arguments should be added.
+
+    Returns:
+        argparse.ArgumentParser: The parser with the added arguments.
+    """
+    parser.add_argument('--train_clip_config', type=str, default=ospj('configs', 'train_clip', 'default.yaml'), help='Path to the training configuration file')
+
     train_clip_parser = parser.add_argument_group('Train clip arguments')
-    
+
     # Model
     train_clip_parser.add_argument('-n', '--name', type=str, required=True)
     train_clip_parser.add_argument('--clip_model_name', type=str, default='ViT-B/32')
 
     # Config
     train_clip_parser.add_argument(
-        '--config_dir', 
-        type=str, 
+        '--config_dir',
+        type=str,
         default=ospj('train_clip', 'models', 'configs', 'ViT.yaml')
     )
 
@@ -31,4 +42,3 @@ def train_clip_argparse(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
     train_clip_parser.add_argument('--num_epochs', type=int, default=100)
 
     return parser
-
