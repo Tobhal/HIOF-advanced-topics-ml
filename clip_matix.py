@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from flags import DATA_FOLDER, device
 
-from utils.dbe import dbe
+from utils import dbe, get_phoscnet, get_test_loader, load_args
 from utils.utils import clip_text_features_from_description
 
 from data import dataset_bengali as dset
@@ -33,95 +33,17 @@ import pandas as pd
 
 from torchvision import transforms
 
-from transformers import AlignProcessor, AlignModel, AutoTokenizer, AutoProcessor, AlignTextModel, AlignConfig
 from enum import Enum
 
-split = 'Fold0_use_50'
-use_augmented = False
+from parser import phosc_net_argparse, dataset_argparse, early_stopper_argparse, clip_matrix_argparse
 
-# align model
-align_processor = AlignProcessor.from_pretrained("kakaobrain/align-base")
-align_model = AlignModel.from_pretrained("kakaobrain/align-base")
-align_auto_tokenizer = AutoTokenizer.from_pretrained("kakaobrain/align-base")
-align_auto_processor = AutoProcessor.from_pretrained("kakaobrain/align-base")
+from utils.get_dataset import get_training_loader, get_validation_loader, get_test_loader
 
-# align_text_model = AlignTextModel.from_pretrained("kakaobrain/align-base")
-
-# Create a new configuration with a larger maximum sequence length
-# config = AlignConfig.from_pretrained("kakaobrain/align-base", max_position_embeddings=2048)
-
-# Create a new model with the updated configuration
-# align_text_model = AlignTextModel(config)
+import argparse
 
 # save_path = ospj('models', 'fine-tuned_clip', split)
-save_path = ospj('models', 'trained_clip', split)
-model_save_path = ospj(save_path, 'best.pt')
-matrix_save_path = ospj(save_path, 'matrix.csv')
-root_dir = ospj(DATA_FOLDER, "BengaliWords", "BengaliWords_CroppedVersion_Folds")
-image_loader_path = ospj(root_dir, split)
 
-# Define phosc model
-phosc_model = create_model(
-    model_name='ResNet18Phosc',
-    phos_size=195,
-    phoc_size=1200,
-    phos_layers=1,
-    phoc_layers=1,
-    dropout=0.5
-).to(device)
 
-# Sett phos and phoc language
-set_phos_version('ben')
-set_phoc_version('ben')
-
-# Assuming you have the necessary imports and initializations done (like dset, phosc_model, etc.)
-testset = dset.CompositionDataset(
-    root=root_dir,
-    phase='train',
-    split=split,
-    # phase='test'
-    # split='fold_0_new',
-    model='resnet18',
-    num_negs=1,
-    pair_dropout=0.5,
-    update_features=False,
-    train_only=True,
-    open_world=True,
-    augmented=use_augmented,
-    add_original_data=True,
-    # phosc_model=phosc_model,
-    # clip_model=clip_model
-)
-
-test_loader = torch.utils.data.DataLoader(
-    testset,
-    batch_size=32,
-    shuffle=True,
-    num_workers=0
-)
-
-# Load original and fine-tuned CLIP models
-original_clip_model, original_clip_preprocess = clip.load("ViT-B/32", device=device)
-original_clip_model.float()
-
-"""
-# Load fine-tuned clip model
-fine_tuned_clip_model, fine_tuned_clip_preprocess = clip.load("ViT-B/32", device=device)
-fine_tuned_clip_model.float()
-
-state_dict = torch.load(model_save_path, map_location=device)
-fine_tuned_clip_model.load_state_dict(state_dict)
-"""
-
-# Preprocessing for CLIP
-clip_preprocess = Compose([
-    Resize(224, interpolation=Image.BICUBIC),
-    CenterCrop(224),
-    ToTensor(),
-    Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
-])
-
-loader = ImageLoader(image_loader_path)
 
 
 def save_matrix_as_csv(matrix, model_save_path, csv_filename="matrix.csv"):
@@ -189,10 +111,6 @@ def calculate_cos_angle_matrix(vectors):
     return cos_angle_matrix
 
 
-class ModelType(Enum):
-    CLIP = "CLIP"
-    ALIGN = "ALIGN"
-
 
 def compute_loss_and_accuracy(images_enc, descriptions_enc, image_names, device):
     # Compute loss and accuracy for validation metrics
@@ -225,30 +143,7 @@ def clip_process_and_evaluate_batch(image_names, descriptions, model, preprocess
     return compute_loss_and_accuracy(images_enc, descriptions_enc, image_names, device)
 
 
-def align_process_and_evaluate_batch(image_names, descriptions, model, transform, device):
-    images = [loader(img_name) for img_name in image_names]
-    losses = []
-    accuracy = []
-
-    for image, description in zip(images, descriptions):
-        processor_inputs = align_auto_processor(image=image, return_tensors="pt")
-        text_input = align_auto_tokenizer(description, return_tensors="pt")
-
-        image_features = model.get_image_features(**processor_inputs)
-        text_features = model.get_text_features(**text_input)
-
-        dbe(image_features.shape, text_features.shape)
-
-        # Compute similarity scores between images and texts
-        loss, acc = compute_loss_and_accuracy(image_features, text_features, image_names, device)
-
-        losses.append(loss)
-        accuracy.append(acc)
-
-    return losses, accuracy
-
-
-def evaluate_model_batch(model, dataloader, device, model_type: ModelType):
+def evaluate_model(model, dataloader, device):
     model.eval()
     similarities = []
     losses = []
@@ -263,10 +158,7 @@ def evaluate_model_batch(model, dataloader, device, model_type: ModelType):
         for batch in tqdm(dataloader, desc="Evaluating"):
             _, _, _, _, _, _, _, _, image_names, _, descriptions = batch
 
-            if model_type == ModelType.CLIP:
-                clip_process_and_evaluate_batch(image_names, descriptions, model, clip_preprocess, loader, device)
-            elif model_type == ModelType.ALIGN:
-                align_process_and_evaluate_batch(image_names, descriptions, model, transform, device)
+            clip_process_and_evaluate_batch(image_names, descriptions, model, clip_preprocess, loader, device)
 
 
     avg_loss = sum(losses) / len(losses)
@@ -275,7 +167,7 @@ def evaluate_model_batch(model, dataloader, device, model_type: ModelType):
     return avg_loss, avg_accuracy, similarities
 
 
-def evaluate_text_embedings(model, dataloader, device, preprocess=clip_preprocess, model_type: ModelType = ModelType.CLIP):
+def evaluate_text_embedings(model, dataloader, device, preprocess=clip_preprocess):
     global align_model, align_auto_tokenizer
     model.eval()
     similarities = []
@@ -286,31 +178,66 @@ def evaluate_text_embedings(model, dataloader, device, preprocess=clip_preproces
             # Unpacking the batch data
             *_, images, _, words = batch
 
-            if model_type == ModelType.CLIP:
-                batch_features_all.append(clip_text_features_from_description(words, model))
-            elif model_type == ModelType.ALIGN:
-                for image, word in zip(images, words):
-                    image = loader(image)
-                    description = get_phosc_description(word)
-
-                    inputs = align_auto_tokenizer(description, padding=True, return_tensors="pt")
-
-                    text_features = model.get_text_features(**inputs)
-
-                    batch_features_all.append(text_features)
+            batch_features_all.append(clip_text_features_from_description(words, model))
 
     batch_features_all = torch.cat(batch_features_all, dim=0)
 
     return batch_features_all
 
 
-if __name__ == '__main__':
-    # similarities, batch_features_all = evaluate_model(original_clip_model, test_loader, device, original_clip_preprocess)
-    # similarities, batch_features_all = evaluate_model(fine_tuned_clip_model, test_loader, device, fine_tuned_clip_preprocess)
 
-    # batch_features_all = evaluate_text_embedings(original_clip_model, test_loader, device, original_clip_preprocess)
-    # batch_features_all = evaluate_text_embedings(fine_tuned_clip_model, test_loader, device, fine_tuned_clip_preprocess)
-    batch_features_all = evaluate_text_embedings(align_model, test_loader, device, align_processor, ModelType.ALIGN)
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser = clip_matrix_argparse(parser)
+    parser = phosc_net_argparse(parser)
+    parser = dataset_argparse(parser)
+    parser = early_stopper_argparse(parser)
+
+    args = parser.parse_args()
+
+    load_args(args.clip_matrix_config, args)
+    load_args(args.phosc_config, args)
+    load_args(args.data_config, args)
+    load_args(args.early_stopper_config, args)
+
+    save_path = ospj('models', 'trained_clip', args.split_name)
+    model_save_path = ospj(save_path, 'best.pt')
+    matrix_save_path = ospj(save_path, 'matrix.csv')
+    root_dir = ospj(DATA_FOLDER, "BengaliWords", "BengaliWords_CroppedVersion_Folds")
+    image_loader_path = ospj(root_dir, args.split_name)
+
+    phosc_model = get_phoscnet(args)
+    test_loader = get_test_loader(args)
+
+    # Preprocessing for CLIP
+    clip_preprocess = Compose([
+        Resize(224, interpolation=Image.BICUBIC),
+        CenterCrop(224),
+        ToTensor(),
+        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
+
+    loader = ImageLoader(image_loader_path)
+
+    # Load original and fine-tuned CLIP models
+    original_clip_model, original_clip_preprocess = clip.load("ViT-B/32", device=device)
+    original_clip_model.float()
+
+    # Load fine-tuned clip model
+    fine_tuned_clip_model, fine_tuned_clip_preprocess = clip.load("ViT-B/32", device=device)
+    fine_tuned_clip_model.float()
+
+    state_dict = torch.load(model_save_path, map_location=device)
+    fine_tuned_clip_model.load_state_dict(state_dict)
+
+    batch_features_all = 0
+
+    if args.eval_type == 'image':
+        avg_loss, avg_accuracy, similarities = evaluate_model(original_clip_model, test_loader, device)
+    elif args.eval_type == 'text':
+        batch_features_all = evaluate_text_embedings(original_clip_model, test_loader, device, original_clip_preprocess)
 
     matrix = calculate_cos_angle_matrix(batch_features_all)
 
@@ -322,3 +249,8 @@ if __name__ == '__main__':
     print(f"Maximum value in matrix: {max_value}")
 
     save_matrix_as_csv(matrix, matrix_save_path)
+
+
+
+if __name__ == '__main__':
+    main()

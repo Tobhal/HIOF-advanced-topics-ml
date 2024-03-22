@@ -19,8 +19,7 @@ from tqdm import tqdm
 
 from flags import DATA_FOLDER, device
 
-from utils.dbe import dbe
-from utils.load_args import load_args
+from utils import dbe, load_args
 from data import dataset_bengali as dset
 from data.dataset_bengali import ImageLoader
 from utils.early_stopping import EarlyStopping
@@ -298,7 +297,7 @@ def validate_one_epoch(epoch, val_loader, clip_model, clip_preprocess, loader, s
 def main():
     parser = argparse.ArgumentParser()
 
-    parser = aling_fine_tune_argparse(parser)
+    parser = clip_fine_tune_argparse(parser)
     parser = phosc_net_argparse(parser)
     parser = dataset_argparse(parser)
     parser = early_stopper_argparse(parser)

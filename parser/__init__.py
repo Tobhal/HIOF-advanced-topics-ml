@@ -4,3 +4,4 @@ from .dataset_argparse import dataset_argparse
 from .early_stopper_argparse import early_stopper_argparse
 from .clip_fine_tune_argparse import clip_fine_tune_argparse
 from .clip_compare_argparse import clip_compare_argparse
+from .clip_matrix_argparse import clip_matrix_argparse
